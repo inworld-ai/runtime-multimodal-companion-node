@@ -149,6 +149,19 @@ app.post('/create-session', authMiddleware, (req, res) => {
   res.json({ sessionKey, wsToken });
 });
 
+// Development helper: issue short-lived access tokens for test pages without exposing auth in browser
+// Enable via ALLOW_TEST_CLIENT=true. DO NOT enable in production.
+app.get('/get_access_token', (req, res) => {
+  if (process.env.ALLOW_TEST_CLIENT !== 'true') {
+    return res.status(403).json({ error: 'Disabled. Set ALLOW_TEST_CLIENT=true for local testing.' });
+  }
+  const sessionKey = uuidv4();
+  connections[sessionKey] = {};
+  const wsToken = uuidv4();
+  wsTokens[sessionKey] = { token: wsToken, expiresAt: Date.now() + WS_TOKEN_TTL_MS };
+  res.json({ sessionKey, wsToken });
+});
+
 // Protect chat endpoint as well
 app.post('/chat', authMiddleware, upload.single('image'), async (req, res) => {
   try {
