@@ -88,6 +88,7 @@
         let mediaRecorder;
         let audioContext;
         let sessionKey;
+        let wsToken;
         let isRecording = false;
         
         const statusDiv = document.getElementById('status');
@@ -115,12 +116,18 @@
                 statusDiv.textContent = 'Connecting...';
                 statusDiv.className = 'disconnected';
                 
-                const response = await fetch('/create-session', { method: 'POST' });
+                const response = await fetch('/get_access_token', { method: 'GET' });
+                if (!response.ok) {
+                    const msg = await response.text();
+                    throw new Error(`Failed to get access token: ${msg}`);
+                }
                 const data = await response.json();
                 sessionKey = data.sessionKey;
+                wsToken = data.wsToken;
                 
                 const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
-                ws = new WebSocket(`${wsProtocol}://${location.host}/ws?key=${sessionKey}`);
+                const wsUrl = `${wsProtocol}://${location.host}/ws?key=${encodeURIComponent(sessionKey)}${wsToken ? `&wsToken=${encodeURIComponent(wsToken)}` : ''}`;
+                ws = new WebSocket(wsUrl);
                 
                 ws.onopen = () => {
                     statusDiv.textContent = `Connected (Session: ${sessionKey})`;
