@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>STT WebSocket Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 10px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #start {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #stop {
+            background-color: #f44336;
+            color: white;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        #results {
+            border: 1px solid #ccc;
+            padding: 15px;
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+            margin-top: 20px;
+        }
+        .message {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #007bff;
+            background-color: white;
+        }
+        .error {
+            border-left-color: #dc3545;
+            background-color: #f8d7da;
+        }
+        .text-message {
+            border-left-color: #28a745;
+            background-color: #d4edda;
+        }
+    </style>
+</head>
+<body>
+    <h1>Speech-to-Text WebSocket Test</h1>
+    <p>This page will test the WebSocket STT functionality of your demo server.</p>
+    
+    <div>
+        <button id="start">🎤 Start Recording</button>
+        <button id="stop" disabled>⏹️ Stop Recording</button>
+        <button id="clear">🗑️ Clear Results</button>
+    </div>
+    
+    <div id="status" class="disconnected">Not connected</div>
+    
+    <h3>Results:</h3>
+    <div id="results"></div>
+
+    <script>
+        let ws;
+        let mediaRecorder;
+        let audioContext;
+        let sessionKey;
+        let isRecording = false;
+        
+        const statusDiv = document.getElementById('status');
+        const resultsDiv = document.getElementById('results');
+        const startBtn = document.getElementById('start');
+        const stopBtn = document.getElementById('stop');
+        const clearBtn = document.getElementById('clear');
+        
+        // Add message to results
+        function addMessage(type, data) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            messageDiv.innerHTML = `
+                <strong>${new Date().toLocaleTimeString()}</strong> - 
+                <strong>${data.type || type}:</strong> 
+                ${JSON.stringify(data, null, 2)}
+            `;
+            resultsDiv.appendChild(messageDiv);
+            resultsDiv.scrollTop = resultsDiv.scrollHeight;
+        }
+        
+        // Initialize WebSocket connection
+        async function initializeConnection() {
+            try {
+                statusDiv.textContent = 'Connecting...';
+                statusDiv.className = 'disconnected';
+                
+                const response = await fetch('/create-session', { method: 'POST' });
+                const data = await response.json();
+                sessionKey = data.sessionKey;
+                
+                const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+                ws = new WebSocket(`${wsProtocol}://${location.host}/ws?key=${sessionKey}`);
+                
+                ws.onopen = () => {
+                    statusDiv.textContent = `Connected (Session: ${sessionKey})`;
+                    statusDiv.className = 'connected';
+                    startBtn.disabled = false;
+                    addMessage('info', { message: 'WebSocket connected successfully' });
+                };
+                
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    console.log('Received:', data);
+                    
+                    if (data.type === 'TEXT') {
+                        addMessage('text-message', data);
+                    } else if (data.type === 'ERROR') {
+                        addMessage('error', data);
+                    } else {
+                        addMessage('message', data);
+                    }
+                };
+                
+                ws.onclose = () => {
+                    statusDiv.textContent = 'Disconnected';
+                    statusDiv.className = 'disconnected';
+                    startBtn.disabled = true;
+                    stopBtn.disabled = true;
+                    addMessage('error', { message: 'WebSocket connection closed' });
+                };
+                
+                ws.onerror = (error) => {
+                    addMessage('error', { message: 'WebSocket error', error: error.toString() });
+                };
+                
+            } catch (error) {
+                addMessage('error', { message: 'Failed to connect', error: error.toString() });
+                statusDiv.textContent = 'Connection failed';
+                statusDiv.className = 'disconnected';
+            }
+        }
+        
+        // Convert audio buffer to the format expected by the server
+        function processAudioBuffer(audioBuffer) {
+            // Convert from the browser's audio format to 16kHz mono PCM
+            const sampleRate = audioBuffer.sampleRate;
+            const inputBuffer = audioBuffer.getChannelData(0); // Get mono channel
+            
+            // Resample to 16kHz if needed
+            const targetSampleRate = 16000;
+            let outputBuffer;
+            
+            if (sampleRate !== targetSampleRate) {
+                const ratio = sampleRate / targetSampleRate;
+                const outputLength = Math.floor(inputBuffer.length / ratio);
+                outputBuffer = new Float32Array(outputLength);
+                
+                for (let i = 0; i < outputLength; i++) {
+                    const sourceIndex = Math.floor(i * ratio);
+                    outputBuffer[i] = inputBuffer[sourceIndex];
+                }
+            } else {
+                outputBuffer = inputBuffer;
+            }
+            
+            return Array.from(outputBuffer);
+        }
+        
+        // Start recording
+        startBtn.onclick = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    }
+                });
+                
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                
+                // Create a script processor to capture audio
+                const processor = audioContext.createScriptProcessor(1024, 1, 1);
+                
+                processor.onaudioprocess = (event) => {
+                    if (isRecording) {
+                        const inputBuffer = event.inputBuffer;
+                        const audioData = processAudioBuffer(inputBuffer);
+                        
+                        // Send audio data to server
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                type: 'audio',
+                                audio: [audioData] // Wrap in array as expected by server
+                            }));
+                        }
+                    }
+                };
+                
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                isRecording = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+                addMessage('info', { message: 'Recording started' });
+                
+            } catch (error) {
+                addMessage('error', { message: 'Failed to start recording', error: error.toString() });
+            }
+        };
+        
+        // Stop recording
+        stopBtn.onclick = () => {
+            isRecording = false;
+            
+            if (audioContext) {
+                audioContext.close();
+            }
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'audioSessionEnd' }));
+            }
+            
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            
+            addMessage('info', { message: 'Recording stopped' });
+        };
+        
+        // Clear results
+        clearBtn.onclick = () => {
+            resultsDiv.innerHTML = '';
+        };
+        
+        // Initialize connection on page load
+        window.onload = initializeConnection;
+    </script>
+</body>
+</html>

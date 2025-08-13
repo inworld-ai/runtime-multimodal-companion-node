@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Image Chat TTS Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .form-container {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"], select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        textarea {
+            height: 80px;
+            resize: vertical;
+        }
+        input[type="file"] {
+            padding: 5px;
+        }
+        button {
+            padding: 12px 24px;
+            margin: 10px 5px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #submit {
+            background-color: #007bff;
+            color: white;
+        }
+        #clear {
+            background-color: #6c757d;
+            color: white;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .processing {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        #image-preview {
+            max-width: 300px;
+            max-height: 300px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        #results {
+            border: 1px solid #ccc;
+            padding: 15px;
+            min-height: 300px;
+            max-height: 500px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+            margin-top: 20px;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-left: 3px solid #007bff;
+            background-color: white;
+            border-radius: 3px;
+        }
+        .error {
+            border-left-color: #dc3545;
+            background-color: #f8d7da;
+        }
+        .text-message {
+            border-left-color: #28a745;
+            background-color: #d4edda;
+        }
+        .audio-message {
+            border-left-color: #17a2b8;
+            background-color: #d1ecf1;
+        }
+        .audio-controls {
+            margin-top: 10px;
+        }
+        .audio-player {
+            width: 100%;
+            margin-top: 5px;
+        }
+        .timestamp {
+            font-size: 12px;
+            color: #666;
+            margin-right: 10px;
+        }
+        .voice-options {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🖼️ Image Chat with TTS Test</h1>
+    <p>Test the WebSocket image chat functionality with text-to-speech responses.</p>
+    
+    <div class="form-container">
+        <div class="form-group">
+            <label for="imageInput">Choose Image:</label>
+            <input type="file" id="imageInput" accept="image/*" />
+            <img id="image-preview" style="display: none;" />
+        </div>
+        
+        <div class="form-group">
+            <label for="textInput">Your Message:</label>
+            <textarea id="textInput" placeholder="Ask something about the image..."></textarea>
+        </div>
+        
+        <div class="form-group">
+            <label for="voiceSelect">Voice (Optional):</label>
+            <select id="voiceSelect">
+                <option value="">Default Voice</option>
+                <option value="Ashley">Ashley</option>
+                <option value="Dennis">Dennis</option>
+                <option value="Emily">Emily</option>
+                <option value="James">James</option>
+                <option value="Lisa">Lisa</option>
+                <option value="Marcus">Marcus</option>
+                <option value="Maria">Maria</option>
+                <option value="Oliver">Oliver</option>
+                <option value="Rachel">Rachel</option>
+                <option value="Sarah">Sarah</option>
+            </select>
+        </div>
+        
+        <div>
+            <button id="submit" disabled>📤 Send Image Chat</button>
+            <button id="clear">🗑️ Clear Results</button>
+        </div>
+    </div>
+    
+    <div id="status" class="disconnected">Not connected</div>
+    
+    <h3>Results:</h3>
+    <div id="results"></div>
+
+    <script>
+        let ws;
+        let sessionKey;
+        let audioQueue = [];
+        let isPlayingAudio = false;
+        let currentInteractionId = null;
+        
+        const statusDiv = document.getElementById('status');
+        const resultsDiv = document.getElementById('results');
+        const submitBtn = document.getElementById('submit');
+        const clearBtn = document.getElementById('clear');
+        const imageInput = document.getElementById('imageInput');
+        const textInput = document.getElementById('textInput');
+        const voiceSelect = document.getElementById('voiceSelect');
+        const imagePreview = document.getElementById('image-preview');
+        
+        // Add message to results
+        function addMessage(type, data, audioData = null) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            let content = `
+                <span class="timestamp">${new Date().toLocaleTimeString()}</span>
+                <strong>${data.type || type}:</strong>
+            `;
+            
+            if (type === 'text-message' && data.text) {
+                content += `<p>${data.text.text}</p>`;
+            } else if (type === 'audio-message' && audioData) {
+                content += `
+                    <p>🔊 Audio Response</p>
+                    <div class="audio-controls">
+                        <audio controls class="audio-player">
+                            <source src="${audioData}" type="audio/wav">
+                            Your browser does not support the audio element.
+                        </audio>
+                    </div>
+                `;
+            } else {
+                content += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            }
+            
+            messageDiv.innerHTML = content;
+            resultsDiv.appendChild(messageDiv);
+            resultsDiv.scrollTop = resultsDiv.scrollHeight;
+        }
+        
+        // Convert base64 audio to playable URL
+        function createAudioUrl(base64Audio) {
+            const binaryString = atob(base64Audio);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: 'audio/wav' });
+            return URL.createObjectURL(blob);
+        }
+        
+        // Queue audio for sequential playback
+        function queueAudio(audioUrl, interactionId) {
+            audioQueue.push({ url: audioUrl, interactionId: interactionId });
+            if (!isPlayingAudio) {
+                playNextAudio();
+            }
+        }
+        
+        // Play next audio in queue
+        function playNextAudio() {
+            if (audioQueue.length === 0) {
+                isPlayingAudio = false;
+                return;
+            }
+            
+            isPlayingAudio = true;
+            const audioItem = audioQueue.shift();
+            const audio = new Audio(audioItem.url);
+            
+            audio.onended = () => {
+                // Clean up the object URL to prevent memory leaks
+                URL.revokeObjectURL(audioItem.url);
+                // Play next audio in queue
+                playNextAudio();
+            };
+            
+            audio.onerror = (error) => {
+                console.error('Audio playback error:', error);
+                URL.revokeObjectURL(audioItem.url);
+                // Continue with next audio even if this one failed
+                playNextAudio();
+            };
+            
+            audio.play().catch(error => {
+                console.error('Audio autoplay prevented or failed:', error);
+                URL.revokeObjectURL(audioItem.url);
+                playNextAudio();
+            });
+        }
+        
+        // Clear audio queue (useful when starting new conversation)
+        function clearAudioQueue() {
+            // Clean up existing URLs
+            audioQueue.forEach(item => URL.revokeObjectURL(item.url));
+            audioQueue = [];
+            isPlayingAudio = false;
+        }
+        
+        // Initialize WebSocket connection
+        async function initializeConnection() {
+            try {
+                statusDiv.textContent = 'Connecting...';
+                statusDiv.className = 'disconnected';
+                
+                const response = await fetch('/create-session', { method: 'POST' });
+                const data = await response.json();
+                sessionKey = data.sessionKey;
+                
+                const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+                ws = new WebSocket(`${wsProtocol}://${location.host}/ws?key=${sessionKey}`);
+                
+                ws.onopen = () => {
+                    statusDiv.textContent = `Connected (Session: ${sessionKey})`;
+                    statusDiv.className = 'connected';
+                    updateSubmitButton();
+                    addMessage('info', { message: 'WebSocket connected successfully' });
+                };
+                
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    console.log('Received:', data);
+                    
+                    if (data.type === 'TEXT') {
+                        addMessage('text-message', data);
+                    } else if (data.type === 'AUDIO' && data.audio && data.audio.chunk) {
+                        const audioUrl = createAudioUrl(data.audio.chunk);
+                        addMessage('audio-message', data, audioUrl);
+                        
+                        // Queue audio for sequential playback
+                        const interactionId = data.packetId?.interactionId || 'unknown';
+                        queueAudio(audioUrl, interactionId);
+                        
+                    } else if (data.type === 'ERROR') {
+                        addMessage('error', data);
+                    } else if (data.type === 'INTERACTION_END') {
+                        statusDiv.textContent = `Connected (Session: ${sessionKey}) - Ready`;
+                        statusDiv.className = 'connected';
+                        submitBtn.disabled = false;
+                        currentInteractionId = null;
+                    } else {
+                        addMessage('message', data);
+                    }
+                };
+                
+                ws.onclose = () => {
+                    statusDiv.textContent = 'Disconnected';
+                    statusDiv.className = 'disconnected';
+                    submitBtn.disabled = true;
+                    addMessage('error', { message: 'WebSocket connection closed' });
+                };
+                
+                ws.onerror = (error) => {
+                    addMessage('error', { message: 'WebSocket error', error: error.toString() });
+                };
+                
+            } catch (error) {
+                addMessage('error', { message: 'Failed to connect', error: error.toString() });
+                statusDiv.textContent = 'Connection failed';
+                statusDiv.className = 'disconnected';
+            }
+        }
+        
+        // Update submit button state
+        function updateSubmitButton() {
+            const hasImage = imageInput.files.length > 0;
+            const hasText = textInput.value.trim().length > 0;
+            const isConnected = ws && ws.readyState === WebSocket.OPEN;
+            
+            submitBtn.disabled = !(hasImage && hasText && isConnected);
+        }
+        
+        // Handle image selection
+        imageInput.onchange = (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    imagePreview.src = e.target.result;
+                    imagePreview.style.display = 'block';
+                    updateSubmitButton();
+                };
+                reader.readAsDataURL(file);
+            } else {
+                imagePreview.style.display = 'none';
+                updateSubmitButton();
+            }
+        };
+        
+        // Handle text input
+        textInput.oninput = updateSubmitButton;
+        
+        // Handle form submission
+        submitBtn.onclick = async () => {
+            const file = imageInput.files[0];
+            const text = textInput.value.trim();
+            const voiceId = voiceSelect.value;
+            
+            if (!file || !text) {
+                alert('Please select an image and enter some text.');
+                return;
+            }
+            
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                alert('WebSocket connection is not open.');
+                return;
+            }
+            
+            try {
+                // Convert image to base64
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const imageData = reader.result; // Already includes data:image/...;base64,
+                    
+                    // Clear any existing audio queue for new conversation
+                    clearAudioQueue();
+                    
+                    const message = {
+                        type: 'imageChat',
+                        text: text,
+                        image: imageData,
+                        voiceId: voiceId || undefined
+                    };
+                    
+                    console.log('Sending message:', { ...message, image: '[IMAGE_DATA]' });
+                    ws.send(JSON.stringify(message));
+                    
+                    // Update UI
+                    statusDiv.textContent = `Connected (Session: ${sessionKey}) - Processing...`;
+                    statusDiv.className = 'processing';
+                    submitBtn.disabled = true;
+                    
+                    addMessage('info', { 
+                        message: 'Sent image chat request',
+                        text: text,
+                        voiceId: voiceId || 'default',
+                        imageSize: `${Math.round(imageData.length / 1024)}KB`
+                    });
+                };
+                reader.readAsDataURL(file);
+                
+            } catch (error) {
+                addMessage('error', { message: 'Failed to send request', error: error.toString() });
+            }
+        };
+        
+        // Clear results
+        clearBtn.onclick = () => {
+            resultsDiv.innerHTML = '';
+            clearAudioQueue(); // Also clear any queued audio
+        };
+        
+        // Allow Enter key in textarea to submit (Ctrl+Enter)
+        textInput.onkeydown = (event) => {
+            if (event.ctrlKey && event.key === 'Enter') {
+                event.preventDefault();
+                if (!submitBtn.disabled) {
+                    submitBtn.click();
+                }
+            }
+        };
+        
+        // Initialize connection on page load
+        window.onload = initializeConnection;
+    </script>
+</body>
+</html>
