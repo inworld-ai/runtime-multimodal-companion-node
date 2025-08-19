@@ -172,3 +172,6 @@ Server → Client messages:
 - Frequent GOAWAY on idle: acceptable; ensure executions are closed and executors are reused
 
 
+## License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
