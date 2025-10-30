@@ -1,6 +1,6 @@
 import { v4 } from 'uuid';
 import { RawData } from 'ws';
-import { GraphBuilder, RemoteLLMChatNode, RemoteTTSNode, TextChunkingNode, GraphExecutor } from '@inworld/runtime/graph';
+import { GraphBuilder, RemoteLLMChatNode, RemoteTTSNode, TextChunkingNode, Graph } from '@inworld/runtime/graph';
 
 import { GraphTypes, TTSOutputStreamIterator } from '@inworld/runtime/common';
 const WavEncoder = require('wav-encoder');
@@ -43,7 +43,7 @@ export class MessageHandler {
   private isProcessing = false;
 
   // Shared ImageChat executor (reuse until voiceId changes)
-  private imageChatExecutor: InstanceType<typeof GraphExecutor> | null = null;
+  private imageChatExecutor: InstanceType<typeof Graph> | null = null;
   private imageChatCurrentVoiceId: string | null = null;
 
   private async ensureImageChatExecutor(voiceId: string) {
@@ -309,14 +309,14 @@ export class MessageHandler {
 
       IMAGECHAT_ACTIVE_EXECUTIONS++;
       logActive('IMAGE', IMAGECHAT_ACTIVE_EXECUTIONS, interactionId);
-      const outputStream = await this.imageChatExecutor!.start(graphInput, v4());
+      const executionResult = await this.imageChatExecutor!.start(graphInput, { executionId: v4() });
 
       try {
         // Handle streaming TTS response
-        await this.handleTTSResponse(outputStream, interactionId);
+        await this.handleTTSResponse(executionResult.outputStream, interactionId);
       } finally {
         this.send(EventFactory.interactionEnd(interactionId));
-        try { this.imageChatExecutor!.closeExecution(outputStream); } catch {}
+        try { this.imageChatExecutor!.closeExecution(executionResult.outputStream); } catch {}
         IMAGECHAT_ACTIVE_EXECUTIONS--;
         logActive('IMAGE', IMAGECHAT_ACTIVE_EXECUTIONS, interactionId);
       }
@@ -389,16 +389,16 @@ export class MessageHandler {
     const executor = graph.executor;
     STT_ACTIVE_EXECUTIONS++;
     logActive('STT', STT_ACTIVE_EXECUTIONS, interactionId);
-    const outputStream = await executor.start(input, v4());
+    const executionResult = await executor.start(input, { executionId: v4() });
 
     try {
       await this.handleResponse(
-        outputStream,
+        executionResult.outputStream,
         interactionId,
       );
     } finally {
       this.send(EventFactory.interactionEnd(interactionId));
-      try { executor.closeExecution(outputStream); } catch {}
+      try { executor.closeExecution(executionResult.outputStream); } catch {}
       STT_ACTIVE_EXECUTIONS--;
       logActive('STT', STT_ACTIVE_EXECUTIONS, interactionId);
     }

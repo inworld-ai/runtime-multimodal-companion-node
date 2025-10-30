@@ -1,6 +1,6 @@
 ### Overview
 
-This service is a Node.js backend built on Inworld Runtime (0.5) that powers:
+This service is a Node.js backend built on Inworld Runtime that powers:
 - Real‑time Speech‑to‑Text (STT) over WebSocket
 - Image+Text → LLM → TTS streaming ("ImageChat") over WebSocket
 - Optional HTTP test endpoints for quick local validation
@@ -26,7 +26,7 @@ Unity connects via HTTP to create a session token, then upgrades to WebSocket fo
 ### Runtime Requirements
 - Node.js 18+
 - TypeScript 5+
-- Inworld Runtime SDK 0.5 (breaking changes vs 0.4.x)
+- Inworld Runtime SDK 0.6
 
 ### Quick Start (with .env-sample)
 1) Copy env template and edit values
@@ -119,17 +119,11 @@ Server → Client messages:
 ### Graphs & Executors
 - STT Graph
   - Constructed once at server startup (`stt_graph.ts`), reused for all STT requests
-  - For each STT turn: `executor.start(input, executionId)` → read first result → `closeExecution`
+  - For each STT turn: `executor.start(input, { executionId: v4() })` → read first result → `closeExecution(executionResult.outputStream)`
 - ImageChat Graph (LLM→TextChunking→TTS)
   - Per WebSocket connection: one shared executor reused across image+text turns
   - Rebuilt only if `voiceId` changes for that connection
-  - For each ImageChat turn: `executor.start(LLMChatRequest, executionId)` → stream TTS chunks → `closeExecution`
-
-### Inworld Runtime 0.5 Notes
-- Use builder signature: `new GraphBuilder({ id, apiKey }).build()` (not `.getExecutor()`)
-- Use nodes: `new RemoteLLMChatNode(...)`, `new TextChunkingNode(...)`, `new RemoteTTSNode(...)`
-- Start executions with `executor.start(input, executionId)` (not `.execute()`)
-- LLM input type: `new GraphTypes.LLMChatRequest({ messages })` (not plain `{ messages }`)
+  - For each ImageChat turn: `executor.start(LLMChatRequest, { executionId: v4() })` → stream TTS chunks → `closeExecution(executionResult.outputStream)`
 
 ### Model Provider & Config
 - LLM provider/model examples
@@ -154,7 +148,7 @@ Server → Client messages:
 - STT executor is global and reused (fast first token)
 - ImageChat executor is per WebSocket connection and reused; serialize turns per connection
 - Optionally enforce small concurrency limits for HTTP `/chat` if enabled
-- Always `closeExecution(outputStream)` after reading results
+- Always `closeExecution(executionResult.outputStream)` after reading results
 
 ### Deployment Tips (e.g., Railway)
 - Keep concurrency conservative (2–4) unless the plan allows more resources
@@ -166,7 +160,6 @@ Server → Client messages:
 - Open `http://localhost:<PORT>/test-image` to submit a prompt + image
 
 ### Troubleshooting
-- LLM input mismatch on 0.5: ensure `GraphTypes.LLMChatRequest({ messages })` and `executor.start(...)`
 - No image update: confirm Unity captures a fresh image before each `imageChat` send
 - Long STT delay: verify VAD thresholds and that `audioSessionEnd` is sent after speech
 - Frequent GOAWAY on idle: acceptable; ensure executions are closed and executors are reused
