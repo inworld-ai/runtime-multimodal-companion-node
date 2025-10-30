@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
+import fsPromises from 'fs/promises';
 import path from 'path';
 import { GraphBuilder, RemoteLLMChatNode } from '@inworld/runtime/graph';
 import { TEXT_CONFIG } from './constants';
@@ -164,10 +165,10 @@ app.get('/get_access_token', (req, res) => {
 
 // Protect chat endpoint as well
 app.post('/chat', authMiddleware, upload.single('image'), async (req, res) => {
+  let imageFile = req.file;
   try {
     console.log("Received request:", req.body);
     const prompt = req.body.prompt;
-    const imageFile = req.file;
 
     if (!prompt) {
       return res.status(400).json({ error: 'Missing prompt' });
@@ -203,22 +204,39 @@ app.post('/chat', authMiddleware, upload.single('image'), async (req, res) => {
     };
 
     console.log("Executing graph with input:", input);
-    const outputStream = await executor.start(input, uuidv4());
+    const executionResult = await executor.start(input, { executionId: uuidv4() });
 
     let output = '';
     console.log("Processing output stream...");
-    for await (const result of outputStream) {
-      if (result.data && (result.data as ContentInterface).content) {
-        output = (result.data as ContentInterface).content;
+    try {
+      for await (const result of executionResult.outputStream) {
+        if (result.data && (result.data as ContentInterface).content) {
+          output = (result.data as ContentInterface).content;
+        }
+        console.log("Received result:", result);
       }
-      console.log("Received result:", result);
+    } finally {
+      try {
+        executor.closeExecution(executionResult.outputStream);
+      } catch (e) {
+        console.error('Error closing execution:', e);
+      }
     }
 
-    fs.unlinkSync(imageFile?.path); // clean up
     res.json({ response: output });
-  } catch (err) {
+  } catch (err: any) {
     console.error(err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err?.message || 'Internal server error' });
+  } finally {
+    // Clean up uploaded file asynchronously
+    if (imageFile?.path) {
+      fsPromises.unlink(imageFile.path).catch((e) => {
+        // Ignore ENOENT (file doesn't exist) errors, log others
+        if (e.code !== 'ENOENT') {
+          console.error('Error deleting file:', e);
+        }
+      });
+    }
   }
 });
 

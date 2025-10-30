@@ -4,7 +4,7 @@ import {
   RemoteSTTNode,
   ProxyNode,
   GraphBuilder,
-  GraphExecutor
+  Graph
 } from '@inworld/runtime/graph';
 import { GraphTypes } from '@inworld/runtime/common';
 import * as os from 'os';
@@ -16,12 +16,12 @@ import {
 } from './types';
 
 export class STTGraph {
-  executor: InstanceType<typeof GraphExecutor>;
+  executor: InstanceType<typeof Graph>;
 
   private constructor({
     executor,
   }: {
-    executor: InstanceType<typeof GraphExecutor>;
+    executor: InstanceType<typeof Graph>;
   }) {
     this.executor = executor;
   }
